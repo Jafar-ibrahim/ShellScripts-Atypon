@@ -7,15 +7,12 @@
   echo "Usage: $0 [OPTIONS] DIRECTORY..."
   echo ""
   echo "Options:"
-  echo "  -h,  --help      	         Show this help message and exit"
-  echo "  -m,  --mode      	         Choose backup mode (1 for full, 2 for incremental)"
-  echo "  -dd, --destination-directory PATH   Set the destination directory to back up to "
-  echo "  -a,  --auto ARGUMENT     	 Enable automatic backups (daily, weekly, or monthly)"
+  echo "  -h, usage : -h      	                      Show this help message and exit"
+  echo "  -m, usage : -m [1,2]     	              Choose backup mode (1 for full, 2 for incremental)"
+  echo "  -s, usage : -s [PATH1 PATH2 ...]            Set the destination directory to back up to "
+  echo "  -d, usage : -d PATH                         Set the destination directory to back up to "
+  echo "  -a, usage : -auto [daily,weekly,monthly]    Enable automatic backups (daily, weekly, or monthly all at midnight(00:00))"
   echo ""
-  echo "Examples:"
-  echo "  $0 documents pictures"
-  echo "  $0 -m 1 --directory /backup home"
-  echo "  $0 -a weekly"
   echo ""
   exit 0
  }
@@ -27,15 +24,96 @@
  }
  
  initialize_dirs() {
-    backup_dir=$1
+    local backup_dir=$1
     echo "Checking and initializing the backup directory structure , this requires creating new directories in the destination directory if not created before"
-    mkdir -p ${backup_dir}/Manual_backups/Full_backups ${backup_dir}/Manual_backups/Incremental_backups ${backup_dir}/Auto_backups/Daily ${backup_dir}/Auto_backups/Weekly ${backup_dir}/Auto_backups/Monthly
+    mkdir -p ${backup_dir}/Manual_backups/Full_backups ${backup_dir}/Manual_backups/Incremental_backups ${backup_dir}/Auto_backups/daily ${backup_dir}/Auto_backups/weekly ${backup_dir}/Auto_backups/monthly
+ }
+ read_dirs() {
+    # Get user-specified directories to back up (if not provided via options)
+    if [[ ${#dirs[@]} -eq 0 ]]; then
+         read -rp  "Enter directories to back up, separated by spaces: " dirs
+    fi
+ }
+ read_backup_dir() {
+    # Get user-specified target directory to back up to (if not provided via options)
+    while [[ -z "$backup_dir"  || ! -d "$backup_dir" ]] ; do
+          read -rp  "Enter destination directory( full path from /home )
+   If performing an incremental backup , it must contain the last full backup in its sub directories : " backup_dir
+          if [[ ! -d "$backup_dir" ]]; then
+               echo "Error: Directory does not exist."
+          fi
+    done
+ }
+ read_mode() {
+    if [[ -z "$mode" ]]; then
+    # -- Informative prompt about backup modes --
+    read -rp "Choose how you want to back up:
+
+  1. Full backup (creates a complete copy of all selected directories)
+  2. Incremental backup (only backs up files changed since the last backup)
+
+Which option do you want? (1/2): " mode
+    fi
+
+    while [[ ! ("$mode" == "1" || "$mode" == "2") ]] ; do
+         echo "wrong mode value , choose 1 or 2"
+         read -rp "Which option do you want? (1/2): " mode
+    done
  }
  
+ fetch_last_snapshot_file() {
+    echo "Fetching the snapshot file of the last backup" | tee -a "${log_file}"
+    last_full_backup_snapshot=$(ls -t ${backup_dir}/*/*/${dirname}/*/*.snar | head -n1)
+    echo "last backup for ${dirname} was $(dirname "$last_full_backup_snapshot")" | tee -a "${log_file}"
+    cp $last_full_backup_snapshot $specific_backup_dir/data.snar
+ }
+ 
+ check_auto_config() {
+if [[ -n "$auto_backup" ]]; then
+  case "$auto_backup" in
+    daily)
+      cron_schedule="0 0 * * *"  # Daily at midnight
+
+      # Add cron job for daily backup
+      (crontab -l 2>/dev/null; echo "$cron_schedule $(readlink -f $0) -m 1 -d $backup_dir -s ${dirs[@]} -f daily" ) | crontab -
+
+      # Add cron job for daily backup deletion (after completion) for any backup older than 7 days
+      (crontab -l 2>/dev/null; echo "0 5 * * * find ${backup_dir}/Auto_backups/Full_backups/${dirname} -name 'backup*' -mtime +7 -exec rm -r {} + >> $general_log_file 2>&1") | crontab -
+      ;;
+
+    weekly)
+      cron_schedule="0 0 * * 0"  # Every Sunday at midnight
+
+      # Add cron job for daily backup
+      (crontab -l 2>/dev/null; echo "$cron_schedule $(readlink -f $0) -m 1 -d $backup_dir -s ${dirs[@]} -f weekly") | crontab -
+
+      # Add cron job for weekly backup deletion (after completion) for any backup older than 4 weeks (31 days)
+      (crontab -l 2>/dev/null; echo "0 5 * * 1 find ${backup_dir}/Auto_backups/Full_backups/${dirname} -name 'backup*' -mtime +31 -exec rm -r {} + >> $general_log_file 2>&1") | crontab -
+      ;;
+
+    monthly)
+      cron_schedule="0 0 1 * *"  # First day of every month at midnight
+
+      # Add cron job for daily backup
+      (crontab -l 2>/dev/null; echo "$cron_schedule $(readlink -f $0) -m 1 -d $backup_dir -s ${dirs[@]} -f monthly") | crontab -
+
+      # Add cron job for monthly backup deletion (after completion) for any backup older than 12 months (365 days)
+      (crontab -l 2>/dev/null; echo "0 5 2 * * find ${backup_dir}/Auto_backups/Full_backups/${dirname} -name 'backup*' -mtime +356 -exec rm -r {} + >> $general_log_file 2>&1") | crontab -
+      ;;
+
+    *)
+      echo "Invalid option argument: $auto_backup , must be [daily,weekly,monthly]." >&2
+      exit 1
+      ;;
+  esac
+  exit 1
+fi
+
+ }
  
  #dirs=()  # Initialize the array of directories
 # Parse options
-while getopts ":hm:d:s:a:" opt; do
+while getopts ":hm:d:s:a:f:" opt; do
   case $opt in
     h)
       show_help
@@ -57,6 +135,9 @@ while getopts ":hm:d:s:a:" opt; do
     a)
       auto_backup="$OPTARG"
       ;;
+    f)
+      freq="$OPTARG"
+      ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
       exit 1
@@ -64,79 +145,21 @@ while getopts ":hm:d:s:a:" opt; do
   esac
 done
 
+# Initialize the log file for all backups in the backup directory
+general_log_file="${backup_dir}"/general_log.log
+
+read_dirs
+
+read_backup_dir
+
+check_auto_config
+
+read_mode
+
+
+
 # Welcome message
 echo "Welcome to the Backup Utility!"
-
-# -- Auto-backup setup --
-if [[ -n "$auto_backup" ]]; then
-  case "$auto_backup" in
-    daily)
-      cron_schedule="0 0 * * *"  # Daily at midnight
-
-      # Add cron job for daily backup
-      (crontab -l 2>/dev/null; echo "$cron_schedule $0 -m 2 --directory $backup_dir ${dirs[@]} >> $log_file 2>&1") | crontab -
-
-      # Add cron job for daily backup deletion (after completion)
-      (crontab -l 2>/dev/null; echo "0 5 * * * find $backup_dir -name 'backup-*daily-*.tar.gz' -mtime +7 -delete") | crontab -
-      ;;
-
-    weekly)
-      cron_schedule="0 0 * * 0"  # Every Sunday at midnight
-
-      # Add cron job for weekly backup
-      (crontab -l 2>/dev/null; echo "$cron_schedule $0 -m 1 --directory $backup_dir ${dirs[@]} >> $log_file 2>&1") | crontab -
-
-      # Add cron job for weekly backup deletion (after completion)
-      (crontab -l 2>/dev/null; echo "0 5 * * 1 find $backup_dir -name 'backup-*weekly-*.tar.gz' -mtime +31 -delete") | crontab -
-      ;;
-
-    monthly)
-      cron_schedule="0 0 1 * *"  # First day of every month at midnight
-
-      # Add cron job for monthly backup
-      (crontab -l 2>/dev/null; echo "$cron_schedule $0 -m 1 --directory $backup_dir ${dirs[@]} >> $log_file 2>&1") | crontab -
-
-      # Add cron job for monthly backup deletion (after completion)
-      (crontab -l 2>/dev/null; echo "0 5 2 * * find $backup_dir -name 'backup-*monthly-*.tar.gz' -mtime +365 -delete") | crontab -
-      ;;
-
-    *)
-      # ... (error handling for invalid auto-backup frequency)
-  esac
-fi
-#-----------------------
-
-# Get user-specified directories to back up (if not provided via options)
-if [[ ${#dirs[@]} -eq 0 ]]; then
-  read -rp  "Enter directories to back up, separated by spaces: " dirs
-fi
-
-# Get user-specified target directory to back up to (if not provided via options)
-while [[ -z "$backup_dir"  || ! -d "$backup_dir" ]] ; do
-  read -rp  "Enter destination directory( full path from /home )
-   If performing an incremental backup , it must contain the last full backup in its sub directories : " backup_dir
-  if [[ ! -d "$backup_dir" ]]; then
-    echo "Error: Directory does not exist."
-  fi
-done
-
-if [[ -z "$mode" ]]; then
-# -- Informative prompt about backup modes --
-read -rp "Choose how you want to back up:
-
-  1. Full backup (creates a complete copy of all selected directories)
-  2. Incremental backup (only backs up files changed since the last backup)
-
-Which option do you want? (1/2): " mode
-fi
-
-while [[ ! "$mode" == "1" || "$mode" == "2" ]] ; do
-      echo "wrong mode value , choose 1 or 2"
-      read -rp "Which option do you want? (1/2): " mode
-done
-
-# -- Detailed description of the chosen mode --
-
 if [[ "$mode" == "1" ]]; then
   echo "Creating a full backup, please be patient this may take some time..."
 elif [[ "$mode" == "2" ]]; then
@@ -146,7 +169,8 @@ fi
 
 timestamp=$(date +%Y.%m.%d-%H:%M:%S)
 initialize_dirs ${backup_dir}
-general_log_file="${backup_dir}"/general_log.log
+
+
 # Start logging
 echo "Backup started at $timestamp" >> $general_log_file
 echo "Backing up : ${dirs[@]} " >> $general_log_file
@@ -167,31 +191,34 @@ for dir in "${dirs[@]}"; do
     dirname=$(basename "$dir")
      
     # Build backup file name
-	if [[ "$mode" == "1" ]]; then
-	   if [[ -n "$auto_backup" ]]; then
+	if [[ "$mode" == "1" ]]; then # Full backup 
+	   if [[ -n "$freq" ]]; then
 	      backup_type="Auto_backups"
-	      echo "Started auto full backup for ${dir}" | tee -a "${general_log_file}"
+	      echo "Started an auto full backup for ${dir}" | tee -a "${general_log_file}"
+	      echo "Creating a new directory with new timestamp for ${dirname} " | tee -a "${general_log_file}"
+	      mkdir -p "${backup_dir}/Auto_backups/${freq}/${dirname}/${dirname}-${timestamp}"
+	      specific_backup_dir="${backup_dir}/Auto_backups/${freq}/${dirname}/${dirname}-${timestamp}"
+	      
 	   else 
 	      backup_type="Manual_backups"
-	      echo "Started manual full backup for ${dir}" | tee -a "${general_log_file}"
+	      echo "Started a manual full backup for ${dir}" | tee -a "${general_log_file}"
+	      echo "Creating a new directory with new timestamp for ${dirname} " | tee -a "${general_log_file}"
+	      mkdir -p "${backup_dir}/${backup_type}/Full_backups/${dirname}/${dirname}-${timestamp}"
+	      specific_backup_dir="${backup_dir}/${backup_type}/Full_backups/${dirname}/${dirname}-${timestamp}"
 	   fi
-	   echo "Creating a new directory with new timestamp for ${dirname} in the backup directory" | tee -a "${general_log_file}"
-	   mkdir -p "${backup_dir}/${backup_type}/Full_backups/${dirname}/${dirname}-${timestamp}"
-	   specific_backup_dir="${backup_dir}/${backup_type}/Full_backups/${dirname}/${dirname}-${timestamp}"
-	   # Full backup 
+	   
 	   backup_file="$specific_backup_dir/backup-$dirname-$timestamp.tar.gz"
 	   
-	else
+	else # Incremental backup
 	   echo "Started manual incremental backup for ${dir}" | tee -a "${general_log_file}" 
-	   echo "Creating a specific directory for ${dirname} in the backup directory"| tee -a "${general_log_file}"
+	   echo "Creating a specific directory for ${dirname} "| tee -a "${general_log_file}"
 	   mkdir -p "${backup_dir}/Manual_backups/Incremental_backups/${dirname}/${dirname}-${timestamp}"
 	   specific_backup_dir="${backup_dir}/Manual_backups/Incremental_backups/${dirname}/${dirname}-${timestamp}"																																		
-	   # Incremental backup
 	   backup_file="$specific_backup_dir/incremental-backup-$dirname-$timestamp.tar.gz"
 	fi
 	
     # Set default log file path if not specified
-    log_file="${log_file:-"$specific_backup_dir/backup-$dirname-$timestamp.log"}"
+    log_file="$specific_backup_dir/backup-$dirname-$timestamp.log"}
     
     # Create the backup
     echo "Backing up $dir to $backup_file..." | tee -a "${general_log_file}"
@@ -199,11 +226,9 @@ for dir in "${dirs[@]}"; do
        tar -cvvz --listed-incremental="${specific_backup_dir}"/data.snar -f "${backup_file}" -C "${path}" "${dirname}" >> "$log_file" 2>&1
     else
        # Use most recent full backup as reference
-       echo "Fetching the snapshot file of the last backup" | tee -a "${log_file}"
-       last_full_backup_snapshot=$(ls -t ${backup_dir}/*/*/${dirname}/*/*.snar | head -n1)
-       echo "last backup for ${dirname} was $(dirname "$last_full_backup_snapshot")" | tee -a "${log_file}"
-       cp $last_full_backup_snapshot $specific_backup_dir/data.snar
+       fetch_last_snapshot_file 
        SNAR=${specific_backup_dir}/data.snar
+       
        tar -cvz --listed-incremental="${SNAR}" -f "${backup_file}" -C "${path}" "${dirname}" >> "$log_file" 2>&1
     fi
 
