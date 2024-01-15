@@ -27,7 +27,7 @@
  read_dirs() {
     # Get user-specified directories to back up (if not provided via options)
     if [[ ${#dirs[@]} -eq 0 ]]; then
-         read -rp  "-> Enter directories to back up, separated by spaces: " dirs
+         read -rp  "-> Enter directories to back up, separated by spaces: " -a dirs
     fi
  }
  read_backup_dir() {
