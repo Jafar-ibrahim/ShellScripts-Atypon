@@ -2,17 +2,13 @@
 
 # Function to display help message
  show_help() {
-  echo "Backup Utility"
-  echo ""
-  echo "Usage: $0 [OPTIONS] DIRECTORY..."
-  echo ""
+  echo "Backup Utility Help Menu"
   echo "Options:"
   echo "  -h, usage : -h      	                      Show this help message and exit"
   echo "  -m, usage : -m [1,2]     	              Choose backup mode (1 for full, 2 for incremental)"
-  echo "  -s, usage : -s [PATH1 PATH2 ...]            Set the destination directory to back up to "
+  echo "  -s, usage : -s [DIR1 DIR2 ...]              Set the source directories to back up"
   echo "  -d, usage : -d PATH                         Set the destination directory to back up to "
   echo "  -a, usage : -auto [daily,weekly,monthly]    Enable automatic backups (daily, weekly, or monthly all at midnight(00:00))"
-  echo ""
   echo ""
   exit 0
  }
@@ -20,7 +16,7 @@
  print_dir_size() {
     local dir_path="$1"
     local dir_size=$(du -sh "$dir_path" | awk '{print $1}')  # Get size using du and extract first field
-    echo "Size of $dir_path before compression : $dir_size"
+    echo "Size of $dir_path before compression : $dir_size" | tee -a "${log_file}" "${general_log_file}"
  }
  
  initialize_dirs() {
@@ -31,13 +27,13 @@
  read_dirs() {
     # Get user-specified directories to back up (if not provided via options)
     if [[ ${#dirs[@]} -eq 0 ]]; then
-         read -rp  "Enter directories to back up, separated by spaces: " dirs
+         read -rp  "-> Enter directories to back up, separated by spaces: " dirs
     fi
  }
  read_backup_dir() {
     # Get user-specified target directory to back up to (if not provided via options)
     while [[ -z "$backup_dir"  || ! -d "$backup_dir" ]] ; do
-          read -rp  "Enter destination directory( full path from /home )
+          read -rp  "-> Enter destination directory( full path from /home )
    If performing an incremental backup , it must contain the last full backup in its sub directories : " backup_dir
           if [[ ! -d "$backup_dir" ]]; then
                echo "Error: Directory does not exist."
@@ -47,7 +43,7 @@
  read_mode() {
     if [[ -z "$mode" ]]; then
     # -- Informative prompt about backup modes --
-    read -rp "Choose how you want to back up:
+    read -rp "-> Choose how you want to back up:
 
   1. Full backup (creates a complete copy of all selected directories)
   2. Incremental backup (only backs up files changed since the last backup)
@@ -69,6 +65,7 @@ Which option do you want? (1/2): " mode
  }
  
  check_auto_config() {
+ # check if the $auto_backup has some value
 if [[ -n "$auto_backup" ]]; then
   case "$auto_backup" in
     daily)
@@ -140,21 +137,24 @@ while getopts ":hm:d:s:a:f:" opt; do
       ;;
     \?)
       echo "Invalid option: -$OPTARG" >&2
-      exit 1
+      show_help
       ;;
   esac
 done
 
-# Initialize the log file for all backups in the backup directory
-general_log_file="${backup_dir}"/general_log.log
+
 
 read_dirs
 
 read_backup_dir
 
+# Initialize the log file for all backups in the backup directory
+general_log_file="${backup_dir}/general_log.log"
+
 check_auto_config
 
 read_mode
+
 
 
 
@@ -185,12 +185,12 @@ for dir in "${dirs[@]}"; do
     # assign a timestamp
     timestamp=$(date +%Y.%m.%d-%H:%M:%S)
     
-    print_dir_size "$dir"  # Print size before creating the backup
+    
     # Extract the path and the base name
     path=$(dirname "$dir")
     dirname=$(basename "$dir")
      
-    # Build backup file name
+    
 	if [[ "$mode" == "1" ]]; then # Full backup 
 	   if [[ -n "$freq" ]]; then
 	      backup_type="Auto_backups"
@@ -207,6 +207,7 @@ for dir in "${dirs[@]}"; do
 	      specific_backup_dir="${backup_dir}/${backup_type}/Full_backups/${dirname}/${dirname}-${timestamp}"
 	   fi
 	   
+	   # Build backup file name/path
 	   backup_file="$specific_backup_dir/backup-$dirname-$timestamp.tar.gz"
 	   
 	else # Incremental backup
@@ -218,7 +219,9 @@ for dir in "${dirs[@]}"; do
 	fi
 	
     # Set default log file path if not specified
-    log_file="$specific_backup_dir/backup-$dirname-$timestamp.log"}
+    log_file="$specific_backup_dir/backup-$dirname-$timestamp.log"
+    # Print size before creating the backup
+    print_dir_size "$dir"  
     
     # Create the backup
     echo "Backing up $dir to $backup_file..." | tee -a "${general_log_file}"
@@ -234,8 +237,8 @@ for dir in "${dirs[@]}"; do
 
     # Check backup status
     if [[ $? -eq 0 ]]; then
-      echo "Backup of $dir completed successfully!" | tee -a "${log_file}" "${general_log_file}"
-      echo "Size of backup files : $(du -sh "$backup_file" | awk '{print $1}')"
+      echo "Backup of $dir completed successfully!" | tee -a "${log_file}" "${general_log_file}" 
+      echo "Size of backup files : $(du -sh "$backup_file" | awk '{print $1}')" | tee -a "${log_file}" "${general_log_file}"
       echo "**********************************************************"
     else
       echo "Backup of $dir failed!" | tee -a "${log_file}" "${general_log_file}"

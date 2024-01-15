@@ -6,7 +6,7 @@ REPORT_FILE="system_health_report.txt"
 show_system_info_header() {
     echo -e "
 ========================================================================
-    Health Check Report (CPU,Process,Disk Usage, Memory)
+                        Health Check Report 
 ========================================================================
  
 Hostname         : `hostname`
@@ -84,7 +84,7 @@ check_services() {
     systemctl | grep running >> $REPORT_FILE
 }
 
-# Function to check recent system updates
+
 check_updates() {
 echo -e "
 ========================================================================
